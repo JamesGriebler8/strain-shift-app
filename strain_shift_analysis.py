@@ -243,6 +243,49 @@ class StrainShiftExperiment:
                 f"filter={_filter!r}. Last step will be ignored."
             )
 
+        # Steps are organised in blocks of 2 * repeat_tests (one block per
+        # stress amplitude: repeat_tests forward + repeat_tests reverse steps
+        # interleaved as fwd, rev, fwd, rev, ...).
+        #
+        # If any step within a block has all-zero stress (e.g. a rest interval
+        # erroneously exported as an Arbitrary Wave sheet), the *entire block*
+        # must be dropped.  Dropping only the bad step and re-pairing the
+        # survivors would zip steps from different amplitudes together.
+        block_size = 2 * self.config.repeat_tests
+        n_full_blocks = len(osc_steps) // block_size
+        remainder = len(osc_steps) % block_size
+        if remainder:
+            warnings.warn(
+                f"{len(osc_steps)} oscillation steps is not a multiple of "
+                f"2 × repeat_tests ({block_size}). "
+                f"The trailing {remainder} step(s) will be ignored.",
+                stacklevel=2,
+            )
+
+        valid_steps: list = []
+        for b in range(n_full_blocks):
+            block = osc_steps[b * block_size : (b + 1) * block_size]
+            bad = [
+                s.name for s in block
+                if not np.any(s.df["Stress"].values != 0.0)
+            ]
+            if bad:
+                warnings.warn(
+                    f"Block {b} (steps {block[0].name}–{block[-1].name}) contains "
+                    f"{len(bad)} zero-stress step(s) {bad} and will be skipped entirely. "
+                    f"Dropping the whole block preserves correct amplitude pairing.",
+                    stacklevel=2,
+                )
+            else:
+                valid_steps.extend(block)
+
+        osc_steps = valid_steps
+
+        if len(osc_steps) < 2:
+            raise ValueError(
+                "After filtering bad blocks, fewer than 2 oscillation steps remain."
+            )
+
         # Process each consecutive forward/reverse pair
         for k in range(0, len(osc_steps) - 1, 2):
             pair = self._process_pair(k // 2, osc_steps[k], osc_steps[k + 1])
@@ -444,7 +487,11 @@ class StrainShiftExperiment:
             n_ft = cfg.periods_for_ft
 
             def tail_mean(arrays):
-                return float(np.mean([a[-n_ft:] for a in arrays]))
+                # Concatenate tails rather than stack — handles the case where
+                # repeats have different n_periods (which would produce a ragged
+                # list and cause np.mean to raise a ValueError).
+                tails = np.concatenate([a[-n_ft:] for a in arrays])
+                return float(np.mean(tails))
 
             avg_sa    = tail_mean(all_strain_amp)
             avg_ta    = tail_mean(all_stress_amp)
@@ -535,7 +582,7 @@ class StrainShiftExperiment:
             strain_amp = (2 / n_pt) * abs(strain_fft[n_osc])
             strain_amp_ft[j]   = strain_amp
             stress_amp_ft[j]   = stress_amp
-            strain_shift_ft[j] = strain_shift_ft[j] = np.real(strain_fft[0]) / n_pt  # mean of the signal
+            strain_shift_ft[j] = (strain_data.max() + strain_data.min()) / 2
 
             # Phase difference between stress and strain fundamentals
             phase_stress = np.angle(stress_fft[n_osc])
@@ -760,7 +807,7 @@ class StrainShiftExperiment:
 # File picker (Qt-based, works in Spyder)
 # =============================================================================
 
-def f_file_dialog(title="Select ARES .txt file", file_filter="Text files (*.txt);;All files (*.*)"):
+def open_file_dialog(title="Select ARES .txt file", file_filter="Text files (*.txt);;All files (*.*)"):
     """
     Open a Qt file picker dialog. Works correctly in Spyder.
 
@@ -813,12 +860,9 @@ if __name__ == "__main__":
     from pathlib import Path
 
     # Set instrument here: "DHR" for ARES/DHR txt, "MCR" for RheoCompass CSV
-    INSTRUMENT = "MCR"
+    INSTRUMENT = "XLSX"
 
-    path = open_file_dialog( title="Select rheology data file",
-            file_filter="All supported (*.csv *.txt *.xlsx *.xls);;"
-                        "MCR CSV (*.csv);;DHR TXT (*.txt);;DHR XLSX (*.xlsx *.xls);;"
-                        "All files (*.*)",)
+    path = open_file_dialog()
     if not path:
         print("No file selected.")
         sys.exit(0)
