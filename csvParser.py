@@ -167,8 +167,23 @@ class File:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {self.filepath}")
 
-        with open(path, "r", encoding="utf-8-sig") as fh:
-            lines = [ln.rstrip("\r\n") for ln in fh]
+        # Try encodings in order of likelihood for RheoCompass exports.
+        # utf-8-sig handles the BOM that Anton Paar software sometimes writes.
+        # latin-1 accepts any byte value and is a safe final fallback.
+        _encodings = ["utf-8-sig", "utf-8", "latin-1", "cp1252"]
+        lines = None
+        for enc in _encodings:
+            try:
+                with open(path, "r", encoding=enc) as fh:
+                    lines = [ln.rstrip("\r\n") for ln in fh]
+                break
+            except UnicodeDecodeError:
+                continue
+        if lines is None:
+            # Should never reach here since latin-1 accepts all bytes,
+            # but handle it cleanly just in case.
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                lines = [ln.rstrip("\r\n") for ln in fh]
 
         i = 0
         n = len(lines)

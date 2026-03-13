@@ -325,8 +325,8 @@ class StrainShiftExperiment:
         is_mcr = self.config.instrument.upper() == "MCR"
 
         if is_mcr:
-            skip_points, end_point_fwd, rec_strain_fwd = self._mcr_boundaries(fwd)
-            _,           end_point_rev, rec_strain_rev = self._mcr_boundaries(rev)
+            skip_points, end_point_fwd, rec_strain_fwd, iv2_stress, iv2_dt = self._mcr_boundaries(fwd)
+            _,           end_point_rev, rec_strain_rev, _,           _      = self._mcr_boundaries(rev)
             # Baseline: mean strain in interval 1 of forward step
             baseline_strain = float(np.mean(fwd_arr[:skip_points, 2]))
         else:
@@ -335,13 +335,21 @@ class StrainShiftExperiment:
             skip_points = max(skip_f, skip_r)
             baseline_strain = float(np.mean(fwd_arr[:skip_points, 2]))
 
-        # Auto-detect frequency from the stress signal in the oscillation region
-        dt = float(fwd_arr[1, 0] - fwd_arr[0, 0])
+        # Auto-detect frequency.
+        # For MCR: use a single clean oscillation interval with its median dt.
+        # Concatenating all intervals corrupts dt (zero-gaps at boundaries) and
+        # causes autocorrelation to detect interval-to-interval repetition instead
+        # of the within-interval oscillation period.
+        # For DHR/XLSX: use the full oscillation block as before.
         if is_mcr:
-            osc_stress = fwd_arr[skip_points:end_point_fwd, 1]
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                freq_hz, period_length = self._detect_frequency(iv2_stress, iv2_dt)
         else:
+            dt = float(fwd_arr[1, 0] - fwd_arr[0, 0])
             osc_stress = fwd_arr[skip_points:, 1]
-        freq_hz, period_length = self._detect_frequency(osc_stress, dt)
+            freq_hz, period_length = self._detect_frequency(osc_stress, dt)
         ang_freq = 2 * np.pi * freq_hz
 
         # Align forward and reverse to the same length
@@ -449,14 +457,14 @@ class StrainShiftExperiment:
                     f"difference or waveform asymmetry. Absolute value will be used "
                     f"in fluid/solid loss modulus calculations."
                 )
-            avg_unrec = abs(avg_ss)#float(np.mean(all_unrec))
+            avg_unrec = abs(avg_ss)
             avg_G     = float(np.mean([m[-n_ft:, 0] for m in all_moduli]))
             avg_Gd    = float(np.mean([m[-n_ft:, 1] for m in all_moduli]))
 
             ang_freq = self.pairs[repeat_indices[0]].ang_freq
             phi      = float(np.arctan2(avg_Gd, avg_G))
             phi_rec  = float(np.arctan2(
-                avg_sa * np.sin(phi) - abs(avg_ss),
+                avg_sa * np.sin(phi) - avg_unrec,
                 avg_sa * np.cos(phi),
             ))
             rec_sa = (float(avg_sa * np.cos(phi) / np.cos(phi_rec))
@@ -466,7 +474,7 @@ class StrainShiftExperiment:
             J_prime         = avg_G  / denom if denom != 0 else 0.0
             J_dprime        = avg_Gd / denom if denom != 0 else 0.0
             fluid_loss_mod  = avg_ta * abs(avg_ss) / avg_sa ** 2 if avg_sa != 0 else 0.0
-            solid_loss_mod  = (avg_ta * abs(rec_sa * np.sin(phi_rec)) / avg_sa ** 2
+            solid_loss_mod  = (avg_ta * abs(rec_sa) * np.sin(phi_rec) / avg_sa ** 2
                                if avg_sa != 0 else 0.0)
             fluid_loss_comp = fluid_loss_mod  / denom if denom != 0 else 0.0
             solid_loss_comp = solid_loss_mod  / denom if denom != 0 else 0.0
@@ -673,7 +681,17 @@ class StrainShiftExperiment:
         end_point   = int(df[df["Interval"] == recovery_iv].index[0])
         recovery_strain = df.loc[df["Interval"] == recovery_iv, "Strain"].values
 
-        return skip_points, end_point, recovery_strain
+        # Provide a single clean oscillation interval for frequency detection.
+        # Using the full concatenated block is unreliable because:
+        #   1. dt=0 artifacts appear at interval boundaries in Step time
+        #   2. Autocorrelation detects interval-to-interval repetition (512 pts)
+        #      rather than the within-interval oscillation period (~82 pts)
+        # Using the median dt of a single interval avoids both problems.
+        iv2_df = df[df["Interval"] == first_osc_iv]
+        iv2_stress = iv2_df["Stress"].values
+        iv2_dt = float(np.median(np.diff(iv2_df["Step time"].values)))
+
+        return skip_points, end_point, recovery_strain, iv2_stress, iv2_dt
 
     @staticmethod
     def _find_skip_points(stress: np.ndarray) -> int:
