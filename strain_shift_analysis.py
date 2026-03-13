@@ -815,7 +815,10 @@ if __name__ == "__main__":
     # Set instrument here: "DHR" for ARES/DHR txt, "MCR" for RheoCompass CSV
     INSTRUMENT = "MCR"
 
-    path = open_file_dialog()
+    path = open_file_dialog( title="Select rheology data file",
+            file_filter="All supported (*.csv *.txt *.xlsx *.xls);;"
+                        "MCR CSV (*.csv);;DHR TXT (*.txt);;DHR XLSX (*.xlsx *.xls);;"
+                        "All files (*.*)",)
     if not path:
         print("No file selected.")
         sys.exit(0)
