@@ -167,23 +167,32 @@ class File:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {self.filepath}")
 
-        # Try encodings in order of likelihood for RheoCompass exports.
-        # utf-8-sig handles the BOM that Anton Paar software sometimes writes.
-        # latin-1 accepts any byte value and is a safe final fallback.
-        _encodings = ["utf-8-sig", "utf-8", "latin-1", "cp1252"]
+        # Detect encoding from the BOM if present, then fall through common
+        # RheoCompass encodings.  utf-16 must be tried first because its BOM
+        # (FF FE) would be misread as valid latin-1 characters, producing
+        # garbled null-padded text.  latin-1 is the catch-all final fallback
+        # since it accepts any byte value without raising UnicodeDecodeError.
+        _encodings = ["utf-16", "utf-8-sig", "utf-8", "cp1252", "latin-1"]
         lines = None
         for enc in _encodings:
             try:
                 with open(path, "r", encoding=enc) as fh:
                     lines = [ln.rstrip("\r\n") for ln in fh]
                 break
-            except UnicodeDecodeError:
+            except (UnicodeDecodeError, UnicodeError):
                 continue
         if lines is None:
-            # Should never reach here since latin-1 accepts all bytes,
-            # but handle it cleanly just in case.
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 lines = [ln.rstrip("\r\n") for ln in fh]
+
+        # Detect delimiter: tab-delimited and comma-delimited are both used
+        # by RheoCompass depending on export settings and software version.
+        # Sniff from the first non-empty line.
+        _delim = ","
+        for ln in lines:
+            if ln.strip():
+                _delim = "\t" if "\t" in ln else ","
+                break
 
         i = 0
         n = len(lines)
@@ -192,19 +201,19 @@ class File:
             line = lines[i]
 
             if line.startswith("Project:"):
-                self.project = _csv_field(line, 1)
+                self.project = _csv_field(line, 1, delim=_delim)
                 i += 1
                 continue
 
             if line.startswith("Test:"):
-                self.test = _csv_field(line, 1)
+                self.test = _csv_field(line, 1, delim=_delim)
                 i += 1
                 continue
 
             if line.startswith("Result:"):
-                step_name = _csv_field(line, 1)
+                step_name = _csv_field(line, 1, delim=_delim)
                 i += 1
-                df, i = self._parse_result(lines, i, n)
+                df, i = self._parse_result(lines, i, n, _delim)
                 if df is not None:
                     self.steps.append(Step(step_name, df))
                 continue
@@ -212,7 +221,7 @@ class File:
             i += 1
 
     def _parse_result(
-        self, lines: List[str], start: int, n: int
+        self, lines: List[str], start: int, n: int, delim: str = ","
     ) -> tuple[Optional[pd.DataFrame], int]:
         """
         Parse all interval blocks for one Result, returning a single
@@ -229,7 +238,7 @@ class File:
                 break
 
             if line.startswith("Interval and data points:"):
-                parts = line.split(",")
+                parts = line.split(delim)
                 try:
                     interval_number = int(parts[1])
                 except (IndexError, ValueError):
@@ -248,7 +257,7 @@ class File:
                 #   "Point No."                 -> "Point No."
                 col_map: dict = {}   # canonical_name -> column_index
                 if i < n and lines[i].startswith("Interval data:"):
-                    header_parts = lines[i].split(",")
+                    header_parts = lines[i].split(delim)
                     _NAME_MAP = {
                         "shear stress":  "Stress",
                         "stress":        "Stress",
@@ -293,7 +302,7 @@ class File:
                     if data_line.strip().strip(",") == "":
                         i += 1
                         break
-                    cols = data_line.split(",")
+                    cols = data_line.split(delim)
                     required_cols = {"Time", "Stress", "Strain"}
                     if (all(k in col_map for k in required_cols)
                             and len(cols) > max(col_map[k] for k in required_cols)):
@@ -338,8 +347,8 @@ class File:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _csv_field(line: str, index: int, default: str = "") -> str:
-    parts = line.split(",")
+def _csv_field(line: str, index: int, default: str = "", delim: str = ",") -> str:
+    parts = line.split(delim)
     try:
         return parts[index].strip()
     except IndexError:
