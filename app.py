@@ -384,4 +384,4 @@ with tab_data:
 # ── Footer ───────────────────────────────────────────────────────────────────
 
 st.divider()
-st.caption("Strain Shift Analysis · Dr. James J Griebler, updated March 13th 2026")
+st.caption("Strain Shift Analysis · Dr. James J Griebler, V 0.1")
