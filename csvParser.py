@@ -390,4 +390,5 @@ if __name__ == "__main__":
     print("\nAround interval 1->2 boundary:")
     mask = s0.df["Interval"].isin([1, 2])
     sub = s0.df[mask][["Interval", "Step time", "Interval Time", "Stress", "Strain"]]
-    print(sub.iloc[8:14].to_string())
+    print(sub.iloc[8:14].to_string())ag_unrec
+    

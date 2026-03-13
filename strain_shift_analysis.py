@@ -535,7 +535,7 @@ class StrainShiftExperiment:
             strain_amp = (2 / n_pt) * abs(strain_fft[n_osc])
             strain_amp_ft[j]   = strain_amp
             stress_amp_ft[j]   = stress_amp
-            strain_shift_ft[j] = (strain_data.max() + strain_data.min()) / 2
+            strain_shift_ft[j] = strain_shift_ft[j] = np.real(strain_fft[0]) / n_pt  # mean of the signal
 
             # Phase difference between stress and strain fundamentals
             phase_stress = np.angle(stress_fft[n_osc])
@@ -760,7 +760,7 @@ class StrainShiftExperiment:
 # File picker (Qt-based, works in Spyder)
 # =============================================================================
 
-def open_file_dialog(title="Select ARES .txt file", file_filter="Text files (*.txt);;All files (*.*)"):
+def f_file_dialog(title="Select ARES .txt file", file_filter="Text files (*.txt);;All files (*.*)"):
     """
     Open a Qt file picker dialog. Works correctly in Spyder.
 
