@@ -1,0 +1,8 @@
+# Changelog
+
+## 0.0 — 2026-03-13
+- xlsxParser: rewrote with direct zip/XML parsing (~2.5x faster)
+- csvParser: column order now read from header, not hardcoded
+- strain_shift_analysis: MCR interval-based boundary detection
+
+
